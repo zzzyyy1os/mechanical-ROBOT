@@ -28,6 +28,8 @@
 #include "oled.h"
 #include "i2c.h"
 #include "TB6612.h"
+#include "Emm_V5.h"
+#include "usart.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -37,7 +39,13 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+/* ===== 步进电机位置模式测试参数 (修改此处即可) ===== */
+#define STEPPER_ADDR           1       /* 驱动器地址 (拨码开关设定) */
+#define STEPPER_SPEED          500     /* 转速 (RPM), 0~5000 */
+#define STEPPER_ACC            10      /* 加速度, 0~255 (0=立即启动) */
+#define STEPPER_PULSES_PER_REV 3200    /* 每圈脉冲数 (驱动器细分) */
+#define STEPPER_DEG            180*3      /* 每次转动角度 (度) */
+#define STEPPER_PULSES         (STEPPER_PULSES_PER_REV * STEPPER_DEG / 360)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -49,13 +57,14 @@
 /* USER CODE BEGIN Variables */
 #include "tim.h"
 
-/* 电机实例: AIN1=PE8, AIN2=PE10, PWM=TIM1_CH1 (PE9) */
+/* TB6612 电机实例: AIN1=PE8, AIN2=PE10, PWM=TIM1_CH1 (PE9) */
 TB6612_HandleTypeDef motor1 = {
     .AIN1_Port = GPIOE, .AIN1_Pin = GPIO_PIN_8,
     .AIN2_Port = GPIOE, .AIN2_Pin = GPIO_PIN_10,
     .htim      = &htim1,
     .Channel   = TIM_CHANNEL_1,
 };
+
 /* USER CODE END Variables */
 /* Definitions for OLEDTask */
 osThreadId_t OLEDTaskHandle;
@@ -71,6 +80,20 @@ const osThreadAttr_t MOTORTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
+/* Definitions for myTask03 */
+osThreadId_t myTask03Handle;
+const osThreadAttr_t myTask03_attributes = {
+  .name = "myTask03",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
+/* Definitions for stepmotTask */
+osThreadId_t stepmotTaskHandle;
+const osThreadAttr_t stepmotTask_attributes = {
+  .name = "stepmotTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -79,6 +102,8 @@ const osThreadAttr_t MOTORTask_attributes = {
 
 void StartOLEDTask(void *argument);
 void StartMOTORTask(void *argument);
+void StartTask03(void *argument);
+void StartstepmotTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -114,6 +139,12 @@ void MX_FREERTOS_Init(void) {
 
   /* creation of MOTORTask */
   MOTORTaskHandle = osThreadNew(StartMOTORTask, NULL, &MOTORTask_attributes);
+
+  /* creation of myTask03 */
+  myTask03Handle = osThreadNew(StartTask03, NULL, &myTask03_attributes);
+
+  /* creation of stepmotTask */
+  stepmotTaskHandle = osThreadNew(StartstepmotTask, NULL, &stepmotTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -191,30 +222,72 @@ void StartMOTORTask(void *argument)
   /* Initialize TB6612 motor driver */
   TB6612_Init(&motor1);
 
-  /* Infinite loop - test motor speed control */
+  /* Infinite loop - TB6612 直流电机测试 */
   for(;;)
   {
-    /* 正转 */
     TB6612_SetSpeed(&motor1, 60);
     osDelay(2000);
 
-    /* 加速 */
     TB6612_SetSpeed(&motor1, 80);
     osDelay(2000);
-
-    /* 停止 */
-    TB6612_SetSpeed(&motor1, 0);
-    osDelay(1000);
-
-    /* 反转 */
-    TB6612_SetSpeed(&motor1, -60);
-    osDelay(2000);
-
-    /* 刹车 */
-    TB6612_Brake(&motor1);
-    osDelay(1000);
   }
   /* USER CODE END StartMOTORTask */
+}
+
+/* USER CODE BEGIN Header_StartTask03 */
+/**
+* @brief Function implementing the myTask03 thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTask03 */
+void StartTask03(void *argument)
+{
+  /* USER CODE BEGIN StartTask03 */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END StartTask03 */
+}
+
+/* USER CODE BEGIN Header_StartstepmotTask */
+/**
+* @brief Function implementing the stepmotTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartstepmotTask */
+void StartstepmotTask(void *argument)
+{
+  /* USER CODE BEGIN StartstepmotTask */
+  /* 初始化 Emm_V5 驱动 (绑定 USART2) */
+  Emm_V5_Init(&huart2);
+  osDelay(3000);  /* 等待驱动器上电 */
+
+  uint32_t pulses = (uint32_t)STEPPER_PULSES;
+
+  /* Infinite loop - 角度模式测试 */
+  for(;;)
+  {
+    /* 使能 */
+    Emm_V5_Enable(STEPPER_ADDR);
+    osDelay(500);
+
+    /* 顺时针转 STEPPER_DEG 度 */
+    Emm_V5_Pos_CW(STEPPER_ADDR, STEPPER_SPEED, STEPPER_ACC, pulses);
+    osDelay(5000);
+
+    /* 逆时针转 STEPPER_DEG 度 */
+    Emm_V5_Pos_CCW(STEPPER_ADDR, STEPPER_SPEED, STEPPER_ACC, pulses);
+    osDelay(5000);
+
+    /* 关闭使能 */
+    Emm_V5_Disable(STEPPER_ADDR);
+    osDelay(1000);
+  }
+  /* USER CODE END StartstepmotTask */
 }
 
 /* Private application code --------------------------------------------------*/

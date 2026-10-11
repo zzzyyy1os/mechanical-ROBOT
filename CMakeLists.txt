@@ -47,6 +47,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Core/Src/oled.c
     Core/Src/TB6612.c
+    Core/Src/Emm_V5.c
 )
 
 # Add include paths
